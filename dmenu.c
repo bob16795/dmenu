@@ -41,6 +41,8 @@ static char numbers[NUMBERSBUFSIZE] = "";
 static char text[BUFSIZ] = "";
 static char *embed;
 static int bh, mw, mh;
+static int dmx = 0;
+static int dmy = 0;
 static int inputw = 0, promptw;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
@@ -91,6 +93,15 @@ calcoffsets(void)
 	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
 		if ((i += (lines > 0) ? bh : MIN(TEXTW(prev->left->text), n)) > n)
 			break;
+}
+
+static int
+max_textw(void)
+{
+ int len = 0;
+ for (struct item *item = items; item && item->text; item++)
+   len = MAX(TEXTW(item->text), len);
+ return len;
 }
 
 static void
@@ -645,6 +656,7 @@ setup(void)
 	bh = drw->fonts->h + 2;
 	lines = MAX(lines, 0);
 	mh = (lines + 1) * bh;
+  promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -671,21 +683,33 @@ setup(void)
 				if (INTERSECT(x, y, 1, 1, info[i]))
 					break;
 
-		x = info[i].x_org;
-		y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
-		mw = info[i].width;
-		XFree(info);
+  	if (centered) {
+      mw = MIN(MAX(max_textw() + promptw, min_width), info[i].width);
+      x = info[i].x_org + ((info[i].width  - mw) / 2) + dmx;
+      y = info[i].y_org + ((info[i].height - mh) / 2) + dmy;
+    } else {
+      x = info[i].x_org + dmx;
+      y = info[i].y_org + (topbar ? 0 : info[i].height - mh) + dmy;
+      mw = info[i].width;
+    }
+ 	
+    XFree(info);
 	} else
 #endif
 	{
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		x = 0;
-		y = topbar ? 0 : wa.height - mh;
-		mw = wa.width;
-	}
-	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
+    if (centered) {
+      mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
+      x = (wa.width  - mw) / 2;
+      y = (wa.height - mh) / 2;
+    } else {
+      x = 0;
+      y = topbar ? 0 : wa.height - mh;
+      mw = wa.width;
+    }
+  }
 	inputw = MIN(inputw, mw/3);
 	match();
 
@@ -693,9 +717,10 @@ setup(void)
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
 	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
-	win = XCreateWindow(dpy, parentwin, x, y, mw, mh, 0,
+  win = XCreateWindow(dpy, parentwin, x, y, mw, mh, border_width,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
 	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
+  XSetWindowBorder(dpy, win, scheme[SchemeSel][ColBg].pixel);
 	XSetClassHint(dpy, win, &ch);
 
 
@@ -724,6 +749,7 @@ static void
 usage(void)
 {
   fputs("usage: dmenu [-bfinv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+        "             [-x xoffset] [-y yoffset] [-bw border]"
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
 	exit(1);
 }
@@ -778,22 +804,33 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
-		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
+    else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
+      centered = !centered;
+    else if (!strcmp(argv[i], "-t")) { /* centers dmenu on screen */
+      strcpy(text, argv[++i]);
+      cursor = strlen(text);
+		} else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
     } else if (!strcmp(argv[i], "-n")) /* instant select only match */
-      instant = 1;
+      instant = 0;
     else if (i + 1 == argc)
 			usage();
 		/* these options take one argument */
 		else if (!strcmp(argv[i], "-l"))   /* number of lines in vertical list */
 			lines = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "-x"))   /* number of lines in vertical list */
+      dmx = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "-y"))   /* number of lines in vertical list */
+      dmy = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-m"))
 			mon = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */
 			fonts[0] = argv[++i];
+		else if (!strcmp(argv[i], "-bw"))  /* font or font set */
+			border_width = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-nb"))  /* normal background color */
 			colors[SchemeNorm][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-nf"))  /* normal foreground color */
